@@ -94,14 +94,16 @@ enough to show the widget while you speak.
 A small Python helper follows that file the way `tail -F` does, surviving a
 missing, truncated or replaced log, and matches only that line (the log also
 holds very large JSON dumps). This is where **starting** and **processing**
-come from. While listening, the helper also reads the microphone with
-`pw-record` and reports a level about 20 times a second against an adaptive
-noise floor, which drives the meter. When nothing is being dictated it records
-nothing.
+come from. It watches the file with inotify, so an idle desktop costs nothing
+but a slow backup poll. While Wispr is listening, by either signal, the helper
+also reads the default microphone with `pw-record` and reports a level about
+20 times a second against an adaptive noise floor, which drives the meter.
+When nothing is being dictated it records nothing.
 
 The widget shows **listening** when either signal says so, and **starting** or
-**processing** only when the log says so. Timeouts bring it back to idle if
-Wispr dies in the middle of a dictation. [docs/architecture.md](docs/architecture.md)
+**processing** only when the log says so. If Wispr dies in the middle of a
+dictation and never logs `idle`, timeouts bring the widget back: 15 seconds
+for starting, 60 for processing, 15 minutes for listening. [docs/architecture.md](docs/architecture.md)
 has the full picture.
 
 The helper runs as a direct child of the shell under `setpriv --pdeathsig TERM`,
@@ -160,7 +162,7 @@ pw-dump | jq -r '.[] | select(.info.props["media.class"]? == "Stream/Input/Audio
 
 If Wispr's stream shows up under another name, set `processName` to it.
 
-**The helper is not running.** `pgrep -af wispr-flow-status` should list one
+**The helper is not running.** `pgrep -af wispr_flow_status` should list one
 process per shell. If it lists none, the tooltip names the reason; `qs log -p
 /usr/share/omarchy/shell/shell.qml -t 200 | grep -i wispr` shows the shell's side.
 
