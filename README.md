@@ -21,6 +21,11 @@ no space until a dictation starts. Then it slides in:
   text, typically one to three seconds.
 - **Idle**: the widget slides back out.
 
+| | |
+|:---:|:---:|
+| <img src="docs/img/bar-listening.png" alt="Listening: mic glyph and level meter in the bar"><br>**Listening** | <img src="docs/img/bar-processing.png" alt="Processing: hourglass in the bar"><br>**Processing** |
+| <img src="docs/img/bar-idle.png" alt="Idle: no widget in the bar"><br>**Idle**, the widget is gone | |
+
 Hovering shows the current state, and why the widget is running with less than
 the full picture if it is (see [Degraded mode](#degraded-mode)). Clicking opens
 Wispr Flow. On a vertical bar the widget shows the glyph only.
@@ -197,8 +202,15 @@ omarchy plugin enable io.github.mcurtis.wispr-flow
 omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
 ```
 
-Saving any file in the plugin directory hot-reloads it. Validate the manifest
-and watch the shell log with:
+Saving the helper or a setting takes effect on its own, but on this Omarchy
+build QML edits reached through the plugin symlink are not hot-reloaded, so
+after editing `Service.qml` or `BarWidget.qml` run:
+
+```bash
+omarchy-restart-shell
+```
+
+Validate the manifest and watch the shell log with:
 
 ```bash
 omarchy plugin validate .
@@ -209,7 +221,7 @@ qs log -p /usr/share/omarchy/shell/shell.qml -t 100
 enabled and on the bar, it writes a fake launcher log, points `logPath` at it,
 and walks one push-to-talk cycle (initializing, listening, stopping,
 processing, idle) with realistic timing. It puts `logPath` back when it exits,
-including on Ctrl-C:
+including on Ctrl-C, a hangup or a broken pipe (only `kill -9` can skip it):
 
 ```bash
 scripts/simulate.sh                    # one quick dictation
