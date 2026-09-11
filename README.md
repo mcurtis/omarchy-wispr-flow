@@ -268,6 +268,9 @@ The helper's tests use the standard library:
 python3 -m unittest discover tests
 ```
 
+GitHub Actions runs those tests, `shellcheck scripts/simulate.sh` and a manifest
+sanity check on every push.
+
 ## Remove
 
 ```bash
