@@ -5,6 +5,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/mcurtis/omarchy-wispr-flow/tags"><img alt="Latest tag" src="https://img.shields.io/github/v/tag/mcurtis/omarchy-wispr-flow?label=version"></a>
+  <a href="LICENSE"><img alt="Licence" src="https://img.shields.io/badge/licence-MIT-blue"></a>
+</p>
+
+<p align="center">
   <img src="preview.png" alt="The Wispr Flow indicator in the Omarchy bar, idle, listening and processing" width="720">
 </p>
 
@@ -21,6 +26,8 @@ no space until a dictation starts. Then it slides in:
   text, typically one to three seconds.
 - **Idle**: the widget slides back out.
 
+### The states
+
 | | |
 |:---:|:---:|
 | <img src="docs/img/bar-listening.png" alt="Listening: mic glyph and level meter in the bar"><br>**Listening** | <img src="docs/img/bar-processing.png" alt="Processing: hourglass in the bar"><br>**Processing** |
@@ -32,6 +39,33 @@ Wispr Flow. On a vertical bar the widget shows the glyph only.
 
 It replaces Wispr's own floating Flow bar, which you can then hide
 ([Hiding Wispr's Flow bar](#hiding-wisprs-flow-bar)).
+
+## Deliberately absent
+
+- **No dictation of its own.** Wispr Flow does the listening, the transcribing
+  and the typing. This is a window onto it.
+- **No transcript in the bar.** The text goes where you are typing, which is
+  where you are looking; a bar is the wrong place to read a sentence.
+- **No Voxtype.** Omarchy's built-in dictation already has an indicator, and
+  `omarchy.indicators` shows it.
+- **No settings for Wispr.** Its shortcuts, languages and Flow bar live in
+  Wispr's own settings; this plugin never writes to them.
+
+## Install
+
+```bash
+omarchy plugin add https://github.com/mcurtis/omarchy-wispr-flow --enable
+omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
+```
+
+`omarchy plugin add` clones the repository into
+`~/.config/omarchy/plugins/io.github.mcurtis.wispr-flow/`, and `--enable` adds
+the widget to the bar. The second line places it directly after the built-in
+indicators, which is where the widget is designed to sit.
+
+It needs Wispr Flow itself, which takes four small fixes on Omarchy: see
+[Requirements](#requirements) and
+[docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md).
 
 ## Requirements
 
@@ -51,18 +85,6 @@ It replaces Wispr's own floating Flow bar, which you can then hide
 All of these ship with Omarchy or with the Wispr package. The plugin needs no
 elevated privileges: no sudo or pkexec is required, and nothing is installed
 outside the plugin directory.
-
-## Install
-
-```bash
-omarchy plugin add https://github.com/mcurtis/omarchy-wispr-flow --enable
-omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
-```
-
-`omarchy plugin add` clones the repository into
-`~/.config/omarchy/plugins/io.github.mcurtis.wispr-flow/`, and `--enable` adds
-the widget to the bar. The second line places it directly after the built-in
-indicators, which is where the widget is designed to sit.
 
 ## Settings
 
