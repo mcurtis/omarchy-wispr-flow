@@ -9,7 +9,6 @@
 
 # $id and $log inside the single-quoted jq programs below are jq variables
 # bound with --arg, not shell expansions.
-# shellcheck disable=SC2016
 
 set -euo pipefail
 
