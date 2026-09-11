@@ -89,8 +89,10 @@ Two signals feed one state.
 
 **PipeWire, for listening.** While Wispr records, PipeWire carries a capture
 stream (`Stream/Input/Audio`) whose `application.process.binary` is
-`wispr-flow`. It appears within about 100 ms of Wispr starting to listen and
-disappears when it stops. Quickshell exposes PipeWire nodes natively, so this
+`wispr-flow`. The node has to be bound before its properties can be read, so
+this signal lands about a second after Wispr starts listening, and disappears
+when it stops. The log normally wins that race; with no log, the widget appears
+about a second into your first words. Quickshell exposes PipeWire nodes natively, so this
 needs no process and does not depend on Wispr's log format. On its own it is
 enough to show the widget, and to run the meter, while you speak.
 
@@ -206,9 +208,10 @@ omarchy plugin enable io.github.mcurtis.wispr-flow
 omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
 ```
 
-Saving the helper or a setting takes effect on its own, but on this Omarchy
-build QML edits reached through the plugin symlink are not hot-reloaded, so
-after editing `Service.qml` or `BarWidget.qml` run:
+Editing the helper does not restart the running one, and on this Omarchy build
+QML edits reached through the plugin symlink are not hot-reloaded either.
+Changing a setting the helper uses (`logPath` or `meter`) does restart it; for
+anything else, including every QML edit, run:
 
 ```bash
 omarchy-restart-shell

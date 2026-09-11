@@ -32,7 +32,10 @@ flowchart LR
 | absent | `idle`, `dismissed`, none | idle |
 
 Listening wins from either side, because the PipeWire stream is the one signal
-that cannot drift from what the microphone is actually doing. Starting and
+that cannot drift from what the microphone is actually doing. It is the slower
+of the two: the node must be bound before its properties can be read, so it
+arrives about a second after Wispr starts listening, and the log usually gets
+there first. Starting and
 processing exist only in the log, so without the helper the widget goes
 straight from idle to listening and back.
 

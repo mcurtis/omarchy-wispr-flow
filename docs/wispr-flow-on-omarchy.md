@@ -180,8 +180,10 @@ appears on your workspace.
 link that opens nothing. The launcher log shows
 `Protocol registration success: false`.
 
-**Why.** The AUR desktop entry declares no URL scheme, and Electron cannot
-register one itself on Linux, so nothing handles `wispr-flow://`.
+**Why.** The AUR desktop entry declares no URL scheme, and Electron's own
+registration fails here (the log prints `Protocol registration success:
+false`), so the scheme has to come from the desktop entry and nothing handles
+`wispr-flow://` until it does.
 
 **Fix.** Make a user-level copy of the desktop entry that declares the scheme,
 and make it the handler:
