@@ -35,13 +35,17 @@ It replaces Wispr's own floating Flow bar, which you can then hide
   [wispr-flow-linux/wispr-flow-linux](https://github.com/wispr-flow-linux/wispr-flow-linux),
   installed from the AUR as `wispr-flow-appimage`. Its launcher is `wispr-flow`
   and it writes the log this plugin follows to
-  `~/.cache/wispr-flow/launcher.log`.
+  `~/.cache/wispr-flow/launcher.log`. On Omarchy it needs four small fixes
+  before push-to-talk, the shortcuts and browser sign-in work;
+  [docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md) walks through
+  the install and each fix.
 - **PipeWire**, with `pw-record` (package `pipewire`), for the level meter.
 - **Python 3** at `/usr/bin/python3`, for the helper. Standard library only.
 - **`setpriv`** from `util-linux`, so the helper exits with the shell.
 
-All of these ship with Omarchy or with the Wispr package. No sudo or pkexec is
-required, and nothing is installed outside the plugin directory.
+All of these ship with Omarchy or with the Wispr package. The plugin needs no
+elevated privileges: no sudo or pkexec is required, and nothing is installed
+outside the plugin directory.
 
 ## Install
 
@@ -157,8 +161,8 @@ pw-dump | jq -r '.[] | select(.info.props["media.class"]? == "Stream/Input/Audio
 If Wispr's stream shows up under another name, set `processName` to it.
 
 **The helper is not running.** `pgrep -af wispr-flow-status` should list one
-process per shell. If it lists none, the tooltip names the reason; `qs log -n
-200 | grep -i wispr` shows the shell's side.
+process per shell. If it lists none, the tooltip names the reason; `qs log -p
+/usr/share/omarchy/shell/shell.qml -t 200 | grep -i wispr` shows the shell's side.
 
 **The meter is flat.** The meter reads the default PipeWire source. If Wispr
 records from a different microphone than your default source, the meter
@@ -189,7 +193,7 @@ and watch the shell log with:
 
 ```bash
 omarchy plugin validate .
-qs log -n 100
+qs log -p /usr/share/omarchy/shell/shell.qml -t 100
 ```
 
 `scripts/simulate.sh` drives the widget without Wispr Flow. It writes a fake
