@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from array import array
 
@@ -143,6 +144,139 @@ class LevelTest(unittest.TestCase):
         self.assertEqual(floor.floor, -70.0)
         floor.scale(-30.0)
         self.assertAlmostEqual(floor.floor, -70.0 + helper.NoiseFloor.RISE_DB)
+
+
+class FakeStdout:
+    """Just enough of pw-record's non-blocking stdout for Meter.read_levels."""
+
+    def __init__(self, reads):
+        self.reads = list(reads)
+        self.closed = False
+        self._r, self._w = os.pipe()
+
+    def read(self):
+        return self.reads.pop(0) if self.reads else None
+
+    def fileno(self):
+        return self._r
+
+    def close(self):
+        self.closed = True
+        os.close(self._r)
+        os.close(self._w)
+
+
+class FakeProc:
+    def __init__(self, reads):
+        self.stdout = FakeStdout(reads)
+        self.terminated = False
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
+class MeterTest(unittest.TestCase):
+    """Chunk framing and the EOF path, without a real pw-record."""
+
+    def meter(self, reads):
+        meter = helper.Meter(enabled=False)  # no pw-record lookup
+        meter.binary = "pw-record"
+        meter.proc = FakeProc(reads)
+        return meter
+
+    def test_levels_are_framed_on_chunk_boundaries(self):
+        chunk = LevelTest.tone(3277, helper.CHUNK_BYTES // 2)
+        half = chunk[: helper.CHUNK_BYTES // 2]
+        meter = self.meter([chunk + half, half])
+        first = meter.read_levels()
+        self.assertEqual(len(first), 1)  # 1.5 chunks in: one level, half held
+        self.assertEqual(len(meter.pending), helper.CHUNK_BYTES // 2)
+        self.assertEqual(len(meter.read_levels()), 1)  # the held half completes
+        self.assertEqual(meter.pending, b"")
+
+    def test_no_data_yet_yields_nothing(self):
+        meter = self.meter([None])
+        self.assertEqual(meter.read_levels(), [])
+        self.assertIsNotNone(meter.proc)
+
+    def test_eof_marks_the_meter_failed_and_stops_respawning(self):
+        meter = self.meter([b""])
+        proc = meter.proc
+        self.assertEqual(meter.read_levels(), [])
+        self.assertTrue(proc.terminated)
+        self.assertTrue(meter.failed)
+        self.assertFalse(meter.available)
+        meter.start()  # a dead pw-record must not be restarted in a loop
+        self.assertIsNone(meter.proc)
+        self.assertEqual(meter.read_levels(), [])
+
+
+class CaptureProtocolTest(unittest.TestCase):
+    """`capture 1` / `capture 0` on stdin start and stop the meter."""
+
+    PW_RECORD_STUB = r"""#!/usr/bin/env python3
+import sys, time
+while True:  # silence, in chunks the helper can frame
+    sys.stdout.buffer.write(b"\0" * 1600)
+    sys.stdout.buffer.flush()
+    time.sleep(0.05)
+"""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        stub = os.path.join(self.dir.name, "pw-record")
+        with open(stub, "w") as handle:
+            handle.write(self.PW_RECORD_STUB)
+        os.chmod(stub, 0o755)
+        env = dict(os.environ, PATH=self.dir.name + os.pathsep + os.environ["PATH"])
+        self.proc = subprocess.Popen(
+            [sys.executable, HELPER, "--log", os.path.join(self.dir.name, "launcher.log")],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
+        )
+
+    def tearDown(self):
+        if self.proc.poll() is None:
+            self.proc.kill()
+            self.proc.wait()
+        self.proc.stdin.close()
+        self.proc.stdout.close()
+        self.dir.cleanup()
+
+    def records(self, seconds):
+        out, deadline = [], time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return out
+            ready, _, _ = select.select([self.proc.stdout], [], [], remaining)
+            if ready:
+                out.append(json.loads(self.proc.stdout.readline()))
+
+    def send(self, command):
+        self.proc.stdin.write(command)
+        self.proc.stdin.flush()
+
+    def test_capture_hint_starts_and_stops_the_meter(self):
+        ready, _, _ = select.select([self.proc.stdout], [], [], 3)
+        self.assertTrue(ready, "helper produced no output")
+        first = json.loads(self.proc.stdout.readline())
+        self.assertEqual((first["state"], first["meter"]), ("idle", True))
+        self.assertIsNone(first["level"])
+
+        self.send(b"capture 1\n")
+        levels = [r["level"] for r in self.records(1.5) if r["level"] is not None]
+        self.assertTrue(levels, "capture 1 produced no levels")
+        self.assertEqual(set(levels), {0.0})  # the stub records silence
+
+        self.send(b"capture 0\n")
+        self.records(0.5)  # drain whatever was already in flight
+        self.assertEqual([r for r in self.records(1) if r["level"] is not None], [])
 
 
 class HelperProcessTest(unittest.TestCase):

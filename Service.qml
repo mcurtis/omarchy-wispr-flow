@@ -65,6 +65,15 @@ Scope {
 
   readonly property bool helperAvailable: helperProcess.running && helperReporting
   readonly property bool meterAvailable: helperAvailable && helperMeter && meterEnabled
+  // Merge rule:
+  //   listening   - PipeWire shows Wispr's capture stream, OR the log says
+  //                 listening and has not gone stale (stale = 3 s after a
+  //                 previously confirmed stream disappeared).
+  //   starting /
+  //   processing  - from the log only, and only while the helper is reporting.
+  //                 If the helper dies mid-transcription the widget collapses to
+  //                 idle rather than holding a state nothing is updating.
+  //   idle        - everything else.
   readonly property string state: {
     if (pipewireListening || (logState === "listening" && !logStale)) return "listening"
     if (helperAvailable && (logState === "starting" || logState === "processing")) return logState
@@ -172,6 +181,9 @@ Scope {
     sendCaptureHint()
     updateStale()
   }
+  // A renamed build (or a typo in the setting) must not leave the stale rule
+  // armed against a stream that can no longer match.
+  onProcessNameChanged: pipewireConfirmed = false
   onLogStateChanged: {
     logStale = false
     updateStale()

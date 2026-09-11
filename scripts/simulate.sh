@@ -72,7 +72,13 @@ log=$workdir/launcher.log
 
 restore() {
   trap - EXIT INT TERM
-  omarchy bar set "$ID" logPath "$original" --json >/dev/null || echo "simulate: could not restore logPath=$original" >&2
+  # setBarWidget has no delete path, so replaying a captured null would leave
+  # "logPath": null in the user's shell.json. The documented default is "".
+  if [[ $original == null ]]; then
+    omarchy bar set "$ID" logPath "" >/dev/null || echo "simulate: could not restore logPath" >&2
+  else
+    omarchy bar set "$ID" logPath "$original" --json >/dev/null || echo "simulate: could not restore logPath=$original" >&2
+  fi
   rm -rf "$workdir"
 }
 trap restore EXIT

@@ -43,10 +43,25 @@ BarWidget {
   property real revealed: shown ? 1 : 0
   property bool hovered: false
 
-  // The widget owns the settings UI, the service owns the work.
-  Binding { target: root.service; property: "logPath"; value: String(root.setting("logPath", "") || ""); when: !!root.service }
-  Binding { target: root.service; property: "processName"; value: String(root.setting("processName", "") || "wispr-flow"); when: !!root.service }
-  Binding { target: root.service; property: "meterEnabled"; value: root.meterWanted; when: !!root.service }
+  // The widget owns the settings UI, the service owns the work. Pushed
+  // imperatively rather than with Bindings: the bar builds one widget per
+  // monitor while the service is a single shared object, so declarative
+  // Bindings would have every monitor's widget own the same three properties
+  // (last writer wins, plus Qt warnings). Writing the values instead is
+  // idempotent — `allowMultiple: false` means every instance reads the same
+  // entry, and assigning an unchanged value emits no change, so the service
+  // does not restart its helper once per monitor. Not exercised on a second
+  // output: creating a headless one would disturb a live session.
+  function pushSettings() {
+    if (!service) return
+    service.logPath = String(setting("logPath", "") || "")
+    service.processName = String(setting("processName", "") || "wispr-flow")
+    service.meterEnabled = meterWanted
+  }
+
+  Component.onCompleted: pushSettings()
+  onServiceChanged: pushSettings()
+  onSettingsChanged: pushSettings()
 
   visible: revealed > 0
   clip: true
@@ -105,7 +120,9 @@ BarWidget {
           color: root.activeColor
           height: Style.space(2) + root.levels[index] * (root.meterHeight - Style.space(2))
 
-          Behavior on height { NumberAnimation { duration: 70 } }
+          // Shorter than the helper's 50 ms level interval, so each bar
+          // settles before the next level arrives.
+          Behavior on height { NumberAnimation { duration: 45 } }
         }
       }
     }
