@@ -1,16 +1,18 @@
 {
   "schemaVersion": 1,
-  "id": "mcurtis.wispr",
+  "id": "io.github.mcurtis.wispr-flow",
   "name": "Wispr Flow",
   "version": "0.1.0",
   "author": "Michael Curtis",
   "license": "MIT",
-  "description": "Slide-in dictation indicator for Wispr Flow: mic and live level meter while listening, spinner while transcribing.",
+  "description": "Slide-in dictation indicator for Wispr Flow on Linux: mic and live level meter while listening, pulsing hourglass while transcribing.",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
-    "barWidget": "Widget.qml"
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
   },
   "barWidget": {
     "displayName": "Wispr Flow",
@@ -25,7 +27,9 @@
     "defaultSection": "center",
     "defaults": {
       "bars": 7,
-      "logPath": ""
+      "meter": true,
+      "logPath": "",
+      "processName": "wispr-flow"
     },
     "schema": [
       {
@@ -38,10 +42,25 @@
         "defaultValue": 7
       },
       {
+        "key": "meter",
+        "type": "boolean",
+        "label": "Show the live level meter",
+        "description": "Samples the default microphone with pw-record while Wispr Flow is listening.",
+        "defaultValue": true
+      },
+      {
         "key": "logPath",
-        "type": "string",
-        "label": "Wispr launcher log (blank = ~/.cache/wispr-flow/launcher.log)",
+        "type": "path",
+        "label": "Wispr Flow launcher log",
+        "description": "Leave empty for ~/.cache/wispr-flow/launcher.log.",
         "defaultValue": ""
+      },
+      {
+        "key": "processName",
+        "type": "string",
+        "label": "Wispr Flow process name",
+        "description": "Binary name of the PipeWire capture stream that means Wispr Flow is listening.",
+        "defaultValue": "wispr-flow"
       }
     ]
   }
