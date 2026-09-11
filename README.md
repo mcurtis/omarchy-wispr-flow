@@ -17,7 +17,7 @@ no space until a dictation starts. Then it slides in:
 - **Listening**: the mic glyph in the bar's active color, followed by a meter
   that scrolls your input level from right to left, so you can see that Wispr
   is actually hearing you.
-- **Processing**: a pulsing hourglass while Wispr turns the recording into
+- **Processing** ("Transcribing" in the tooltip): a pulsing hourglass while Wispr turns the recording into
   text, typically one to three seconds.
 - **Idle**: the widget slides back out.
 
@@ -112,11 +112,16 @@ changes. It never leaves a `pw-record` behind.
 
 ### Degraded mode
 
-If the helper cannot run (no Python, no log yet) or `pw-record` is missing, the
-widget keeps working from PipeWire alone: it appears while you speak, without
-the meter and without the processing hourglass. The tooltip then names what is
-missing. A log that does not exist yet only means Wispr has not been launched
-since the cache was cleared.
+Each part fails on its own, and the tooltip says which one and what it costs:
+
+| Tooltip reason | What still works |
+|---|---|
+| Status helper not running (needs python3 and setpriv) | Listening, from PipeWire. No meter, no starting or transcribing. |
+| Wispr log not found at `<path>` | Listening and the meter. No starting or transcribing. |
+| pw-record unavailable | Every state, without the meter. |
+
+A missing log usually means Wispr has not been launched since the cache was
+cleared, or `logPath` points somewhere else.
 
 To see what the plugin currently believes:
 
@@ -198,13 +203,21 @@ omarchy plugin validate .
 qs log -p /usr/share/omarchy/shell/shell.qml -t 100
 ```
 
-`scripts/simulate.sh` drives the widget without Wispr Flow. It writes a fake
-launcher log, points `logPath` at it, and walks the states with realistic
-timing; it restores your settings when it exits, including on Ctrl-C:
+`scripts/simulate.sh` drives the widget without Wispr Flow. With the plugin
+enabled and on the bar, it writes a fake launcher log, points `logPath` at it,
+and walks one push-to-talk cycle (initializing, listening, stopping,
+processing, idle) with realistic timing. It puts `logPath` back when it exits,
+including on Ctrl-C:
 
 ```bash
-scripts/simulate.sh
+scripts/simulate.sh                    # one quick dictation
+scripts/simulate.sh --hold 30          # hold listening, e.g. for a screenshot
+scripts/simulate.sh --cycles 3 --gap 2 # several dictations in a row
 ```
+
+Listening comes from the fake log, and the meter samples your real default
+microphone, so speak while it holds listening if you want to see bars.
+`scripts/simulate.sh --help` lists every option.
 
 The helper's tests use the standard library:
 
