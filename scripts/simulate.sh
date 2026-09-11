@@ -7,6 +7,10 @@
 # and the meter samples your real default microphone: speak or play audio
 # while holding `listening` if you want visible bars.
 
+# $id and $log inside the single-quoted jq programs below are jq variables
+# bound with --arg, not shell expansions.
+# shellcheck disable=SC2016
+
 set -euo pipefail
 
 ID="io.github.mcurtis.wispr-flow"

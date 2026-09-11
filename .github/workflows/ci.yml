@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Helper tests
+        run: python3 -m unittest discover tests
+
+      - name: Shell script
+        run: shellcheck scripts/simulate.sh
+
+      - name: Manifest
+        run: |
+          jq -e '.schemaVersion == 1
+            and has("id") and has("name") and has("version")
+            and has("kinds") and has("entryPoints")' manifest.json > /dev/null
