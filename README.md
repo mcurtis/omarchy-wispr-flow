@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="preview.png" alt="The Wispr Flow indicator in the Omarchy bar, idle, listening and processing" width="720">
+  <img src="preview.png" alt="Wispr Flow for Omarchy: the bar widget listening with a live level meter, transcribing with an hourglass, and gone while idle" width="900">
 </p>
 
 ## What it shows
