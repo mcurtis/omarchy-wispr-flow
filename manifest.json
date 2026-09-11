@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "id": "mcurtis.wispr",
+  "name": "Wispr Flow",
+  "version": "0.1.0",
+  "author": "Michael Curtis",
+  "license": "MIT",
+  "description": "Slide-in dictation indicator for Wispr Flow: mic and live level meter while listening, spinner while transcribing.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Widget.qml"
+  },
+  "barWidget": {
+    "displayName": "Wispr Flow",
+    "description": "Hidden while idle; slides in next to the indicators with a live mic meter while Wispr Flow is listening.",
+    "category": "AI",
+    "aliases": [
+      "wispr",
+      "wispr-flow",
+      "dictation"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "center",
+    "defaults": {
+      "bars": 7,
+      "logPath": ""
+    },
+    "schema": [
+      {
+        "key": "bars",
+        "type": "integer",
+        "label": "Meter bars",
+        "min": 3,
+        "max": 12,
+        "step": 1,
+        "defaultValue": 7
+      },
+      {
+        "key": "logPath",
+        "type": "string",
+        "label": "Wispr launcher log (blank = ~/.cache/wispr-flow/launcher.log)",
+        "defaultValue": ""
+      }
+    ]
+  }
+}
