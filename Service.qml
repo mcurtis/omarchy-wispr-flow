@@ -43,9 +43,19 @@ Scope {
   property int retryDelay: 1000
 
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property bool pipewireListening: {
+  // A node's `properties` stay empty until something binds it, so every capture
+  // stream is tracked; only then can application.process.binary be read.
+  readonly property var captureStreams: {
+    var list = []
     for (var i = 0; i < nodes.length; i++) {
-      if (isWisprCapture(nodes[i])) return true
+      var node = nodes[i]
+      if (node && node.isStream && !node.isSink) list.push(node)
+    }
+    return list
+  }
+  readonly property bool pipewireListening: {
+    for (var i = 0; i < captureStreams.length; i++) {
+      if (isWisprCapture(captureStreams[i])) return true
     }
     return false
   }
@@ -89,7 +99,7 @@ Scope {
   }
 
   function isWisprCapture(node) {
-    if (!node || !node.isStream || node.isSink || !node.ready || !node.properties) return false
+    if (!node.ready || !node.properties) return false
     var props = node.properties
     return props["media.class"] === "Stream/Input/Audio"
       && props["application.process.binary"] === processName
@@ -229,6 +239,8 @@ Scope {
       }
     }
   }
+
+  PwObjectTracker { objects: root.captureStreams }
 
   IpcHandler {
     target: "io.github.mcurtis.wispr-flow"
