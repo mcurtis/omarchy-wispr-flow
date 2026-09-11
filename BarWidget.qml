@@ -58,7 +58,7 @@ BarWidget {
     NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
   }
 
-  onDictationStateChanged: if (shown) glyph = dictationState === "processing" ? "󰔟" : "󰍬"
+  onDictationStateChanged: if (dictationState !== "idle") glyph = dictationState === "processing" ? "󰔟" : "󰍬"
   onTooltipChanged: if (hovered && bar) bar.showTooltip(root, tooltip)
 
   Row {

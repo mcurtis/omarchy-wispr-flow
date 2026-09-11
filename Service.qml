@@ -34,6 +34,7 @@ Scope {
   property bool helperMeter: false
   property bool helperReporting: false
   property bool logStale: false
+  property string helperLogPath: "" // the log the running helper follows
   property real level: 0
   property var history: []
 
@@ -146,6 +147,7 @@ Scope {
       logPresent: logPresent,
       degraded: degraded,
       logPath: resolvedLogPath,
+      helperLogPath: helperLogPath,
       processName: processName,
       meterEnabled: meterEnabled
     })
@@ -209,10 +211,14 @@ Scope {
     stdout: SplitParser {
       onRead: function(data) { root.applyLine(data) }
     }
-    onStarted: root.sendCaptureHint()
+    onStarted: {
+      root.helperLogPath = root.resolvedLogPath
+      root.sendCaptureHint()
+    }
     onRunningChanged: {
       if (running) return
       root.helperReporting = false
+      root.helperLogPath = ""
       root.logState = "idle"
       if (root.destroying) return
       if (root.restartPending) {

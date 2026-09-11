@@ -78,7 +78,7 @@ trap 'exit 130' INT TERM
 # one follows the fake log, or its first lines would be missed.
 wait_for_helper() {
   local deadline=$((SECONDS + 10))
-  until status | jq -e --arg log "$log" '.logPath == $log and .helperAvailable and .logPresent' >/dev/null 2>&1; do
+  until status | jq -e --arg log "$log" '.helperLogPath == $log and .helperAvailable and .logPresent' >/dev/null 2>&1; do
     (( SECONDS < deadline )) || fail "the plugin did not pick up $log"
     sleep 0.1
   done
