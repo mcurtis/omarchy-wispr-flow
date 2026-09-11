@@ -69,8 +69,12 @@ indicators, which is where the widget is designed to sit.
 Open the bar settings, or set them from a terminal:
 
 ```bash
+omarchy bar set io.github.mcurtis.wispr-flow processName wispr-flow
 omarchy bar set io.github.mcurtis.wispr-flow bars 9 --json
 ```
+
+Numbers and booleans need `--json`; plain strings do not. With `--json`, a
+string value has to carry its own quotes (`'"wispr-flow"'`).
 
 | Setting | Default | Notes |
 |---------|---------|-------|
@@ -88,7 +92,7 @@ stream (`Stream/Input/Audio`) whose `application.process.binary` is
 `wispr-flow`. It appears within about 100 ms of Wispr starting to listen and
 disappears when it stops. Quickshell exposes PipeWire nodes natively, so this
 needs no process and does not depend on Wispr's log format. On its own it is
-enough to show the widget while you speak.
+enough to show the widget, and to run the meter, while you speak.
 
 **The launcher log, for everything else.** Wispr logs one line per state change:
 
