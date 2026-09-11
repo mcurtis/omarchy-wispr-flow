@@ -18,7 +18,7 @@
 The widget sits next to the built-in indicators, left of the clock, and takes
 no space until a dictation starts. Then it slides in:
 
-- **Starting**: the mic glyph appears as Wispr opens the microphone.
+- **Starting**: a pulsing mic glyph, while Wispr opens the microphone.
 - **Listening**: the mic glyph in the bar's active color, followed by a meter
   that scrolls your input level from right to left, so you can see that Wispr
   is actually hearing you.
@@ -67,6 +67,19 @@ It needs Wispr Flow itself, which takes four small fixes on Omarchy: see
 [Requirements](#requirements) and
 [docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md).
 
+A working install is invisible until you dictate, so confirm it two ways:
+
+```bash
+# Is the plugin loaded? Prints the current state as JSON.
+omarchy-shell io.github.mcurtis.wispr-flow status
+
+# Watch it appear in the bar, without Wispr Flow running.
+~/.config/omarchy/plugins/io.github.mcurtis.wispr-flow/scripts/simulate.sh --hold 5
+```
+
+The second walks the widget through one dictation from a fake log and puts your
+settings back afterwards.
+
 ## Requirements
 
 - **Omarchy 4.0.3** or later.
@@ -79,7 +92,7 @@ It needs Wispr Flow itself, which takes four small fixes on Omarchy: see
   [docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md) walks through
   the install and each fix.
 - **PipeWire**, with `pw-record` (package `pipewire`), for the level meter.
-- **Python 3** at `/usr/bin/python3`, for the helper. Standard library only.
+- **Python 3** on `PATH`, for the helper. Standard library only.
 - **`setpriv`** from `util-linux`, so the helper exits with the shell.
 
 All of these ship with Omarchy or with the Wispr package. The plugin needs no
@@ -116,7 +129,9 @@ this signal lands about a second after Wispr starts listening, and disappears
 when it stops. The log normally wins that race; with no log, the widget appears
 about a second into your first words. Quickshell exposes PipeWire nodes natively, so this
 needs no process and does not depend on Wispr's log format. On its own it is
-enough to show the widget, and to run the meter, while you speak.
+enough to show the widget while you speak. It also tells the helper to start the
+meter, so the meter still works when the log is missing — but not when the
+helper is.
 
 **The launcher log, for everything else.** Wispr logs one line per state change:
 
@@ -260,7 +275,8 @@ scripts/simulate.sh --cycles 3 --gap 2 # several dictations in a row
 
 Listening comes from the fake log, and the meter samples your real default
 microphone, so speak while it holds listening if you want to see bars.
-`scripts/simulate.sh --help` lists every option.
+`scripts/simulate.sh --help` lists every option. It needs `jq`, as do two of
+the troubleshooting commands above; `jq` ships with Omarchy.
 
 The helper's tests use the standard library:
 
@@ -268,8 +284,8 @@ The helper's tests use the standard library:
 python3 -m unittest discover tests
 ```
 
-GitHub Actions runs those tests, `shellcheck scripts/simulate.sh` and a manifest
-sanity check on every push.
+Once the repository is on GitHub, Actions runs those tests,
+`shellcheck scripts/simulate.sh` and a manifest sanity check on every push.
 
 ## Remove
 

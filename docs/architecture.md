@@ -26,10 +26,15 @@ flowchart LR
 | PipeWire stream | Log state | Shown |
 |---|---|---|
 | present | anything | listening |
-| absent | `initializing` | starting |
+| absent | `initializing` | starting (helper only) |
 | absent | `listening` | listening |
-| absent | `stopping`, `processing` | processing |
+| absent, but a Wispr stream has been seen before | `listening` | listening for 3 s, then idle |
+| absent | `stopping`, `processing` | processing (helper only) |
 | absent | `idle`, `dismissed`, none | idle |
+
+The rows marked *helper only* need the log follower: starting and processing
+exist nowhere else, and if the helper dies mid-transcription the widget drops
+straight to idle rather than holding processing.
 
 Listening wins from either side, because the PipeWire stream is the one signal
 that cannot drift from what the microphone is actually doing. It is the slower
@@ -40,8 +45,12 @@ processing exist only in the log, so without the helper the widget goes
 straight from idle to listening and back.
 
 A dictation that never reaches `idle`, because Wispr crashed or the log was
-replaced mid-dictation, is ended by a timeout rather than holding the widget
-open: 15 seconds in starting, 60 in processing, 15 minutes in listening.
+replaced mid-dictation, is ended rather than holding the widget open. On a
+machine where PipeWire detection works, the three-second stale rule above is
+what ends it: the capture stream vanishes when Wispr dies, and the log's
+`listening` is disbelieved three seconds later. The helper's own stuck-state
+timeouts — 15 seconds in starting, 60 in processing, 15 minutes in listening —
+are the fallback for machines where the PipeWire signal never fires at all.
 
 ## The helper
 

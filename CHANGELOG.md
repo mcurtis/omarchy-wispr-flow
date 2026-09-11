@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.1.0] - Unreleased
+## [Unreleased]
 
 ### Added
 
@@ -22,5 +22,3 @@ All notable changes to this project are documented here. The format follows
 - IPC `status` command that prints the current state as JSON.
 - `scripts/simulate.sh` to walk the states without Wispr Flow, and a
   `unittest` suite for the helper.
-
-[0.1.0]: https://github.com/mcurtis/omarchy-wispr-flow/releases/tag/v0.1.0
