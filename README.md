@@ -1,0 +1,222 @@
+<h1 align="center">Wispr Flow for Omarchy</h1>
+
+<p align="center">
+  Wispr Flow's dictation state in the Omarchy bar: hidden while idle, a live mic meter while you speak, an hourglass while it transcribes.
+</p>
+
+<p align="center">
+  <img src="preview.png" alt="The Wispr Flow indicator in the Omarchy bar, idle, listening and processing" width="720">
+</p>
+
+## What it shows
+
+The widget sits next to the built-in indicators, left of the clock, and takes
+no space until a dictation starts. Then it slides in:
+
+- **Starting**: the mic glyph appears as Wispr opens the microphone.
+- **Listening**: the mic glyph in the bar's active color, followed by a meter
+  that scrolls your input level from right to left, so you can see that Wispr
+  is actually hearing you.
+- **Processing**: a pulsing hourglass while Wispr turns the recording into
+  text, typically one to three seconds.
+- **Idle**: the widget slides back out.
+
+Hovering shows the current state, and why the widget is running with less than
+the full picture if it is (see [Degraded mode](#degraded-mode)). Clicking opens
+Wispr Flow. On a vertical bar the widget shows the glyph only.
+
+It replaces Wispr's own floating Flow bar, which you can then hide
+([Hiding Wispr's Flow bar](#hiding-wisprs-flow-bar)).
+
+## Requirements
+
+- **Omarchy 4.0.3** or later.
+- **Wispr Flow for Linux**, the unofficial port at
+  [wispr-flow-linux/wispr-flow-linux](https://github.com/wispr-flow-linux/wispr-flow-linux),
+  installed from the AUR as `wispr-flow-appimage`. Its launcher is `wispr-flow`
+  and it writes the log this plugin follows to
+  `~/.cache/wispr-flow/launcher.log`.
+- **PipeWire**, with `pw-record` (package `pipewire`), for the level meter.
+- **Python 3** at `/usr/bin/python3`, for the helper. Standard library only.
+- **`setpriv`** from `util-linux`, so the helper exits with the shell.
+
+All of these ship with Omarchy or with the Wispr package. No sudo or pkexec is
+required, and nothing is installed outside the plugin directory.
+
+## Install
+
+```bash
+omarchy plugin add https://github.com/mcurtis/omarchy-wispr-flow --enable
+omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
+```
+
+`omarchy plugin add` clones the repository into
+`~/.config/omarchy/plugins/io.github.mcurtis.wispr-flow/`, and `--enable` adds
+the widget to the bar. The second line places it directly after the built-in
+indicators, which is where the widget is designed to sit.
+
+## Settings
+
+Open the bar settings, or set them from a terminal:
+
+```bash
+omarchy bar set io.github.mcurtis.wispr-flow bars 9 --json
+```
+
+| Setting | Default | Notes |
+|---------|---------|-------|
+| `bars` | `7` | Meter bars, 3 to 12. |
+| `meter` | `true` | Show the level meter. Off, the widget shows the glyph only and the helper does not record. |
+| `logPath` | empty | Wispr's launcher log. Empty means `~/.cache/wispr-flow/launcher.log`. |
+| `processName` | `wispr-flow` | The binary name on Wispr's PipeWire capture stream. Change it only if you run a differently named build. |
+
+## How it works
+
+Two signals feed one state.
+
+**PipeWire, for listening.** While Wispr records, PipeWire carries a capture
+stream (`Stream/Input/Audio`) whose `application.process.binary` is
+`wispr-flow`. It appears within about 100 ms of Wispr starting to listen and
+disappears when it stops. Quickshell exposes PipeWire nodes natively, so this
+needs no process and does not depend on Wispr's log format. On its own it is
+enough to show the widget while you speak.
+
+**The launcher log, for everything else.** Wispr logs one line per state change:
+
+```text
+16:42:07.312 › updateDictationStatus: listening {...}
+```
+
+A small Python helper follows that file the way `tail -F` does, surviving a
+missing, truncated or replaced log, and matches only that line (the log also
+holds very large JSON dumps). This is where **starting** and **processing**
+come from. While listening, the helper also reads the microphone with
+`pw-record` and reports a level about 20 times a second against an adaptive
+noise floor, which drives the meter. When nothing is being dictated it records
+nothing.
+
+The widget shows **listening** when either signal says so, and **starting** or
+**processing** only when the log says so. Timeouts bring it back to idle if
+Wispr dies in the middle of a dictation. [docs/architecture.md](docs/architecture.md)
+has the full picture.
+
+The helper runs as a direct child of the shell under `setpriv --pdeathsig TERM`,
+is restarted with a backoff if it exits, and is restarted when a setting
+changes. It never leaves a `pw-record` behind.
+
+### Degraded mode
+
+If the helper cannot run (no Python, no log yet) or `pw-record` is missing, the
+widget keeps working from PipeWire alone: it appears while you speak, without
+the meter and without the processing hourglass. The tooltip then names what is
+missing. A log that does not exist yet only means Wispr has not been launched
+since the cache was cleared.
+
+To see what the plugin currently believes:
+
+```bash
+omarchy-shell io.github.mcurtis.wispr-flow status
+```
+
+## Hiding Wispr's Flow bar
+
+Wispr draws its own floating Flow bar at the bottom of the screen. To use this
+widget instead:
+
+1. In Wispr Flow, open **Settings → System** and turn off **Show Flow Bar at
+   all times**.
+2. Wispr still maps a transparent 440×320 status window, which can catch
+   clicks along the bottom edge. Park it in a special workspace with a window
+   rule in `~/.config/hypr/hyprland.lua`:
+
+```lua
+-- Wispr Flow's leftover status window: keep it off screen and out of focus.
+o.window({ class = "^wispr-flow$", initial_title = "^Flow Status Indicator$" }, {
+  float = true,
+  no_initial_focus = true,
+  no_focus = true,
+  focus_on_activate = false,
+  no_anim = true,
+  workspace = "special:wispr silent",
+})
+```
+
+Hyprland picks the rule up on save. Wispr's settings window (`Hub`) is not
+affected.
+
+## Troubleshooting
+
+**Nothing appears when I dictate.** Check that the plugin is enabled and placed:
+`omarchy plugin list` should show it enabled. Then dictate and, while holding
+push-to-talk, list the binaries that own a capture stream:
+
+```bash
+pw-dump | jq -r '.[] | select(.info.props["media.class"]? == "Stream/Input/Audio") | .info.props["application.process.binary"]'
+```
+
+If Wispr's stream shows up under another name, set `processName` to it.
+
+**The helper is not running.** `pgrep -af wispr-flow-status` should list one
+process per shell. If it lists none, the tooltip names the reason; `qs log -n
+200 | grep -i wispr` shows the shell's side.
+
+**The meter is flat.** The meter reads the default PipeWire source. If Wispr
+records from a different microphone than your default source, the meter
+follows the default one. Check `wpctl status` and set the default source to
+the microphone Wispr uses. Also check that `pw-record` exists.
+
+**Processing never shows.** It comes only from the log. Confirm that
+`~/.cache/wispr-flow/launcher.log` exists and grows while you dictate, or set
+`logPath` if your launcher writes elsewhere.
+
+**Two dictation indicators.** Omarchy has its own indicator for Voxtype, its
+built-in dictation tool, and older personal widgets for Wispr may still be
+enabled. Remove the extra one with `omarchy plugin disable <id>`.
+
+## Development
+
+Point the shell at a working copy instead of an installed clone:
+
+```bash
+ln -sfn ~/path/to/omarchy-wispr-flow ~/.config/omarchy/plugins/io.github.mcurtis.wispr-flow
+omarchy-shell shell rescanPlugins
+omarchy plugin enable io.github.mcurtis.wispr-flow
+omarchy bar put io.github.mcurtis.wispr-flow --after omarchy.indicators
+```
+
+Saving any file in the plugin directory hot-reloads it. Validate the manifest
+and watch the shell log with:
+
+```bash
+omarchy plugin validate .
+qs log -n 100
+```
+
+`scripts/simulate.sh` drives the widget without Wispr Flow. It writes a fake
+launcher log, points `logPath` at it, and walks the states with realistic
+timing; it restores your settings when it exits, including on Ctrl-C:
+
+```bash
+scripts/simulate.sh
+```
+
+The helper's tests use the standard library:
+
+```bash
+python3 -m unittest discover tests
+```
+
+## Remove
+
+```bash
+omarchy plugin remove io.github.mcurtis.wispr-flow
+```
+
+This removes the widget from the bar and deletes the plugin directory. The
+plugin stores nothing elsewhere. If you added the Hyprland rule above and want
+Wispr's Flow bar back, delete the rule and turn **Show Flow Bar at all times** back on in Wispr.
+
+## License
+
+MIT, see [LICENSE](LICENSE). Wispr Flow is a product of Wispr AI, Inc., which
+does not sponsor or endorse this plugin.
