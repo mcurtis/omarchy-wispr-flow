@@ -152,8 +152,10 @@ o.window({ class = "^wispr-flow$", initial_title = "^Flow Status Indicator$" }, 
 })
 ```
 
-Hyprland picks the rule up on save. Wispr's settings window (`Hub`) is not
-affected.
+Apply it with `hyprctl reload` and check it with `hyprctl configerrors`, which
+prints nothing when the rule is valid. The rule only applies to new windows,
+so restart Wispr Flow once. [docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md#fix-3-the-flow-bar-is-an-empty-framed-box-that-eats-clicks)
+also floats Wispr's settings window.
 
 ## Troubleshooting
 
