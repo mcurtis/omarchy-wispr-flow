@@ -90,7 +90,12 @@ The service, for its part, assembles the helper's output itself under a 4 KiB
 line budget rather than trusting the parser's unbounded buffer, and kills a
 helper that exceeds the budget or goes 30 seconds without a line. Every stop,
 restart and reload signals the helper's whole process group (TERM, then KILL
-two seconds later), so a `pw-record` cannot be left behind.
+two seconds later), so a `pw-record` cannot be left behind. That signal is
+`/usr/bin/kill`, started with an empty environment. The only other executable
+the plugin runs is `/usr/bin/wispr-flow`, when the widget is clicked: it too
+gets a closed environment, a fixed `PATH` of `/usr/bin` plus the session
+variables its launcher script and the Electron app read (`BarWidget.qml` lists
+them), so nothing the shell inherited reaches either process.
 
 If Python, the log or `pw-record` is unavailable, the service reports a
 `degraded` reason that the tooltip shows, and keeps showing listening from

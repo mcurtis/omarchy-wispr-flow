@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] - 2026-09-12
+
+Follow-up from the marketplace security review; no change to what the widget
+shows.
+
+### Security
+
+- The process-group signal (`/usr/bin/kill`) and the click launch of
+  `/usr/bin/wispr-flow` no longer inherit the shell's environment. `kill` gets
+  an empty one; the Wispr launcher gets a fixed `PATH` of `/usr/bin` plus only
+  the session variables it and the Electron app read, so loader variables such
+  as `LD_PRELOAD` cannot reach either.
+
 ## [0.1.1] - 2026-09-12
 
 Hardening from the marketplace security review; no change to what the widget

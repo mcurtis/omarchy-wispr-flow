@@ -10,11 +10,14 @@ import Quickshell.Services.Pipewire
 //   - helper/wispr_flow_status.py: follows the launcher log for the starting and
 //     processing states and samples the microphone for the level meter.
 //
-// The helper is the only process this plugin starts, and it is confined: fixed
-// /usr/bin executables (no PATH lookup), an isolated interpreter (-I -S) in a
-// closed environment, its own process group so the whole tree is signalled
+// The helper is the only process this plugin keeps running, and it is confined:
+// fixed /usr/bin executables (no PATH lookup), an isolated interpreter (-I -S)
+// in a closed environment, its own process group so the whole tree is signalled
 // together, a byte budget on what it may send, and a deadline by which it must
-// have said something. The README's "The helper's boundaries" has the summary.
+// have said something. The two other executables the plugin ever runs, kill(1)
+// for the group signal here and the Wispr launcher on a click (BarWidget.qml),
+// get the same treatment: an absolute path and a closed environment. The
+// README's "The helper's boundaries" has the summary.
 //
 // Not keepLoaded: nothing here must survive a plugin hot-reload, and a kept
 // instance would keep running old code (and an old helper) until a shell
@@ -195,11 +198,16 @@ Scope {
   // Process.signal reaches the direct child only. kill(1) with the negated pid
   // reaches the process group setsid gave the helper, a pw-record it left
   // behind included. The pid check keeps a stale or null id from ever turning
-  // into a signal to our own group.
+  // into a signal to our own group. kill runs with an empty environment, so
+  // nothing the shell inherited, loader variables included, reaches it.
   function signalHelperGroup(name) {
     var pid = Number(helperProcess.processId)
     if (!helperProcess.running || !(pid > 1)) return
-    Quickshell.execDetached(["/usr/bin/kill", "-s", name, "--", "-" + pid])
+    Quickshell.execDetached({
+      command: ["/usr/bin/kill", "-s", name, "--", "-" + pid],
+      clearEnvironment: true,
+      environment: {}
+    })
   }
 
   function terminateHelper() {

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.mcurtis.wispr-flow",
   "name": "Wispr Flow",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": "Michael Curtis",
   "license": "MIT",
   "description": "Dictation state for Wispr Flow (the unofficial Linux port) in the Omarchy bar: hidden while idle, mic glyph and a live level meter while listening, a pulsing hourglass while the transcription runs. Reads PipeWire natively, with an optional stdlib helper for the launcher log.",

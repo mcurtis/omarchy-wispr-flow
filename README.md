@@ -163,8 +163,8 @@ setting it uses changes.
 
 ### The helper's boundaries
 
-The helper is the only process the plugin starts, and it is kept on a short
-leash:
+The helper is the only process the plugin keeps running, and it is kept on a
+short leash:
 
 - **Fixed executables, closed environment.** The shell starts it as
   `/usr/bin/setsid /usr/bin/setpriv --pdeathsig TERM /usr/bin/python3 -I -S
@@ -187,6 +187,15 @@ leash:
   process group, so a stop, restart or plugin reload sends TERM to the whole
   group, `pw-record` included, then KILL two seconds later for anything left.
   `--pdeathsig` covers the shell itself going away.
+- **Nothing else inherits the shell's environment either.** The group signal
+  runs `/usr/bin/kill` with an empty environment. Clicking the widget starts
+  `/usr/bin/wispr-flow` with a closed one: a fixed `PATH` of `/usr/bin` for
+  the coreutils its launcher script calls, plus only the session variables the
+  script and the Electron app read (`HOME`, `USER`, `LOGNAME`, `LANG`, the
+  `XDG_*` runtime, session and directory variables, `WAYLAND_DISPLAY`,
+  `DISPLAY`, `XAUTHORITY`, the D-Bus session address and the cursor theme and
+  size), each only when the shell has it. Loader variables such as
+  `LD_PRELOAD` reach neither.
 
 ### Degraded mode
 

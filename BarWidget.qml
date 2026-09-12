@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io // processContext, for the closed-environment launch
 import qs.Commons
 import qs.Ui
 
@@ -24,6 +25,43 @@ BarWidget {
     var recent = service ? service.history.slice(-barCount) : []
     while (recent.length < barCount) recent.unshift(0)
     return recent
+  }
+
+  // The environment Wispr Flow is launched with, on top of clearEnvironment:
+  // a fixed PATH for the coreutils its launcher script calls, and the session
+  // variables the script and the Electron app read (a null entry passes the
+  // shell's value through only when the shell has one). Nothing else the
+  // shell inherited, loader variables included, reaches the launcher.
+  readonly property var launchEnvironment: ({
+    "PATH": "/usr/bin",
+    "HOME": null,
+    "USER": null,
+    "LOGNAME": null,
+    "LANG": null,
+    "XDG_RUNTIME_DIR": null,
+    "XDG_SESSION_ID": null,
+    "XDG_SESSION_TYPE": null,
+    "XDG_CURRENT_DESKTOP": null,
+    "XDG_CONFIG_HOME": null,
+    "XDG_CACHE_HOME": null,
+    "XDG_DATA_HOME": null,
+    "XDG_DATA_DIRS": null,
+    "WAYLAND_DISPLAY": null,
+    "DISPLAY": null,
+    "XAUTHORITY": null,
+    "DBUS_SESSION_BUS_ADDRESS": null,
+    "XCURSOR_THEME": null,
+    "XCURSOR_SIZE": null
+  })
+
+  // The AUR package's launcher, by absolute path: no shell, no PATH lookup,
+  // and only the environment above.
+  function launchWispr() {
+    Quickshell.execDetached({
+      command: ["/usr/bin/wispr-flow"],
+      clearEnvironment: true,
+      environment: launchEnvironment
+    })
   }
 
   readonly property color foreground: bar ? bar.barForeground : Color.foreground
@@ -132,8 +170,7 @@ BarWidget {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    // The AUR package's launcher, by absolute path: no shell and no PATH lookup.
-    onClicked: Quickshell.execDetached(["/usr/bin/wispr-flow"])
+    onClicked: root.launchWispr()
     onEntered: {
       root.hovered = true
       if (root.bar) root.bar.showTooltip(root, root.tooltip)
