@@ -55,9 +55,13 @@ are the fallback for machines where the PipeWire signal never fires at all.
 ## The helper
 
 The helper, `helper/wispr_flow_status.py`, is a single Python file using only
-the standard library. The shell starts it as a direct child under
-`setpriv --pdeathsig TERM`, and it also exits when its stdin closes, so it
-cannot outlive the shell. It writes one JSON line per change:
+the standard library. The shell starts it as a direct child, by absolute paths
+only, as `/usr/bin/setsid /usr/bin/setpriv --pdeathsig TERM /usr/bin/python3
+-I -S`, with a closed environment (`XDG_RUNTIME_DIR` and the PipeWire socket
+variables, nothing else). `setsid` makes it the leader of its own session and
+process group, `--pdeathsig` ends it with the shell, and it also exits when its
+stdin closes. It writes one JSON line per change, and repeats the last one at
+least every 5 seconds as a heartbeat:
 
 ```json
 {"state": "listening", "level": 0.42, "log": true, "meter": true}
@@ -68,15 +72,25 @@ whether a level meter can run. It:
 
 - follows the log like `tail -F`, reopening it when it is created, truncated or
   replaced, and buffering partial lines so a state line split across two writes
-  is still read once;
+  is still read once. The log is opened without following a symlink and is only
+  followed while it is a regular file owned by the user; each poll reads at
+  most 64 KiB, a line over 64 KiB is dropped, and a replaced file over 1 MiB is
+  taken from its end;
 - matches only `updateDictationStatus: <state>`, ignoring the multi-kilobyte
   JSON dumps that share the file;
 - waits on inotify, with a slow poll as backup and as the only mechanism while
   the log's directory does not exist yet;
-- starts `pw-record` only while listening, whether the log says so or the shell
-  reports Wispr's capture stream on the helper's stdin, and computes an RMS
-  level against an adaptive noise floor, emitting about 20 levels a second;
+- starts `/usr/bin/pw-record` only while listening, whether the log says so or
+  the shell reports Wispr's capture stream on the helper's stdin, and computes
+  an RMS level against an adaptive noise floor, emitting about 20 levels a
+  second;
 - stops `pw-record` on every exit path, including SIGTERM.
+
+The service, for its part, assembles the helper's output itself under a 4 KiB
+line budget rather than trusting the parser's unbounded buffer, and kills a
+helper that exceeds the budget or goes 30 seconds without a line. Every stop,
+restart and reload signals the helper's whole process group (TERM, then KILL
+two seconds later), so a `pw-record` cannot be left behind.
 
 If Python, the log or `pw-record` is unavailable, the service reports a
 `degraded` reason that the tooltip shows, and keeps showing listening from

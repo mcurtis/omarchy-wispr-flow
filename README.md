@@ -34,8 +34,9 @@ no space until a dictation starts. Then it slides in:
 | <img src="docs/img/bar-idle.png" alt="Idle: no widget in the bar"><br>**Idle**, the widget is gone | |
 
 Hovering shows the current state, and why the widget is running with less than
-the full picture if it is (see [Degraded mode](#degraded-mode)). Clicking opens
-Wispr Flow. On a vertical bar the widget shows the glyph only.
+the full picture if it is (see [Degraded mode](#degraded-mode)). Clicking runs
+`/usr/bin/wispr-flow`, the AUR package's launcher. On a vertical bar the widget
+shows the glyph only.
 
 It replaces Wispr's own floating Flow bar, which you can then hide
 ([Hiding Wispr's Flow bar](#hiding-wisprs-flow-bar)).
@@ -91,11 +92,14 @@ settings back afterwards.
   before push-to-talk, the shortcuts and browser sign-in work;
   [docs/wispr-flow-on-omarchy.md](docs/wispr-flow-on-omarchy.md) walks through
   the install and each fix.
-- **PipeWire**, with `pw-record` (package `pipewire`), for the level meter.
-- **Python 3** on `PATH`, for the helper. Standard library only.
-- **`setpriv`** from `util-linux`, so the helper exits with the shell.
+- **PipeWire**, with `/usr/bin/pw-record` (package `pipewire-audio`), for the
+  level meter.
+- **Python 3** at `/usr/bin/python3`, for the helper. Standard library only.
+- **`setsid` and `setpriv`** from `util-linux`, so the helper runs in its own
+  process group and exits with the shell.
 
-All of these ship with Omarchy or with the Wispr package. The plugin needs no
+All of these ship with Omarchy or with the Wispr package, and every one is run
+by its absolute path: nothing is looked up on `PATH`. The plugin needs no
 elevated privileges: no sudo or pkexec is required, and nothing is installed
 outside the plugin directory.
 
@@ -154,9 +158,35 @@ dictation and never logs `idle`, timeouts bring the widget back: 15 seconds
 for starting, 60 for processing, 15 minutes for listening. [docs/architecture.md](docs/architecture.md)
 has the full picture.
 
-The helper runs as a direct child of the shell under `setpriv --pdeathsig TERM`,
-is restarted with a backoff if it exits, and is restarted when a setting
-changes. It never leaves a `pw-record` behind.
+The helper is restarted with a backoff if it exits, and restarted when a
+setting it uses changes.
+
+### The helper's boundaries
+
+The helper is the only process the plugin starts, and it is kept on a short
+leash:
+
+- **Fixed executables, closed environment.** The shell starts it as
+  `/usr/bin/setsid /usr/bin/setpriv --pdeathsig TERM /usr/bin/python3 -I -S
+  helper/wispr_flow_status.py`, with an environment that carries only
+  `XDG_RUNTIME_DIR` and the PipeWire socket variables `pw-record` needs.
+  Nothing is looked up on `PATH`; `-I -S` ignores `PYTHON*` variables and
+  every site and user package directory; inotify comes from the interpreter's
+  own libc rather than a library search. `pw-record` is likewise
+  `/usr/bin/pw-record`, started with the same closed environment.
+- **The log is a bounded, plain file.** It is opened without following a
+  symlink and is followed only while it is a regular file owned by you;
+  anything else counts as absent. Each poll reads at most 64 KiB, a line over
+  64 KiB is dropped, and a replaced file over 1 MiB is picked up at its end
+  rather than replayed.
+- **A heartbeat and a budget.** The helper repeats its record at least every
+  5 seconds. The service assembles its output under a 4 KiB line budget and
+  kills a helper that exceeds it or goes silent for 30 seconds; a fresh one
+  starts after the backoff.
+- **Whole-group teardown.** `setsid` gives the helper its own session and
+  process group, so a stop, restart or plugin reload sends TERM to the whole
+  group, `pw-record` included, then KILL two seconds later for anything left.
+  `--pdeathsig` covers the shell itself going away.
 
 ### Degraded mode
 
@@ -164,7 +194,7 @@ Each part fails on its own, and the tooltip says which one and what it costs:
 
 | Tooltip reason | What still works |
 |---|---|
-| Status helper not running (needs python3 and setpriv) | Listening, from PipeWire. No meter, no starting or transcribing. |
+| Status helper not running (needs /usr/bin/python3 and util-linux) | Listening, from PipeWire. No meter, no starting or transcribing. |
 | Wispr log not found at `<path>` | Listening and the meter. No starting or transcribing. |
 | pw-record unavailable | Every state, without the meter. |
 
@@ -220,6 +250,8 @@ If Wispr's stream shows up under another name, set `processName` to it.
 **The helper is not running.** `pgrep -af wispr_flow_status` should list one
 process per shell. If it lists none, the tooltip names the reason; `qs log -p
 /usr/share/omarchy/shell/shell.qml -t 200 | grep -i wispr` shows the shell's side.
+The helper needs `/usr/bin/python3`, `/usr/bin/setsid` and `/usr/bin/setpriv`
+exactly there; it does not search `PATH`.
 
 **The meter is flat.** The meter reads the default PipeWire source. If Wispr
 records from a different microphone than your default source, the meter
@@ -284,8 +316,8 @@ The helper's tests use the standard library:
 python3 -m unittest discover tests
 ```
 
-Once the repository is on GitHub, Actions runs those tests,
-`shellcheck scripts/simulate.sh` and a manifest sanity check on every push.
+GitHub Actions runs those tests, `shellcheck scripts/simulate.sh` and a
+manifest sanity check on every push.
 
 ## Remove
 
