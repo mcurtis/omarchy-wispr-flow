@@ -22,6 +22,22 @@ def status_line(state):
     return ("12:00:00.000 › updateDictationStatus: %s { customAttributes: { uuid: '' } }\n" % state).encode()
 
 
+def spawn_helper(args, patch=None):
+    """The helper as the shell runs it: isolated interpreter, closed environment.
+
+    With `patch`, the module is imported and patched (Python source) before
+    main() runs, so tests can shorten timers or point PW_RECORD at a stub
+    without the helper growing a switch for it.
+    """
+    if patch is None:
+        command = [sys.executable, "-I", "-S", HELPER]
+    else:
+        code = "import sys; sys.path.insert(0, %r); import wispr_flow_status as h; %s; h.main(sys.argv[1:])" % (
+            HELPER_DIR, patch)
+        command = [sys.executable, "-I", "-S", "-c", code]
+    return subprocess.Popen(command + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, env={})
+
+
 class StateMappingTest(unittest.TestCase):
     def test_push_to_talk_cycle(self):
         states = [helper.parse_state(status_line(s)) for s in
@@ -54,6 +70,9 @@ class LogFollowerTest(unittest.TestCase):
         with open(path or self.path, "ab") as handle:
             handle.write(data)
 
+    def states(self):
+        return [helper.parse_state(line) for line in self.follower.lines()]
+
     def test_existing_content_is_not_replayed(self):
         self.append(status_line("listening"))
         self.assertEqual(self.follower.lines(), [])
@@ -65,7 +84,7 @@ class LogFollowerTest(unittest.TestCase):
         self.assertEqual(self.follower.lines(), [])
         self.assertFalse(self.follower.present)
         self.append(status_line("initializing") + status_line("listening"))
-        self.assertEqual([helper.parse_state(l) for l in self.follower.lines()], ["starting", "listening"])
+        self.assertEqual(self.states(), ["starting", "listening"])
 
     def test_partial_lines_are_held_until_complete(self):
         self.follower.lines()
@@ -80,7 +99,7 @@ class LogFollowerTest(unittest.TestCase):
         self.follower.lines()
         with open(self.path, "wb") as handle:
             handle.write(status_line("listening"))
-        self.assertEqual([helper.parse_state(l) for l in self.follower.lines()], ["listening"])
+        self.assertEqual(self.states(), ["listening"])
 
     def test_rotation_follows_the_new_file(self):
         self.append(b"old session\n")
@@ -88,7 +107,7 @@ class LogFollowerTest(unittest.TestCase):
         os.rename(self.path, self.path + ".1")
         self.append(b"late write to the rotated file\n", self.path + ".1")
         self.append(status_line("idle"))
-        self.assertEqual([helper.parse_state(l) for l in self.follower.lines()], ["idle"])
+        self.assertEqual(self.states(), ["idle"])
 
     def test_deleted_file_reports_absent(self):
         self.append(b"line\n")
@@ -96,6 +115,72 @@ class LogFollowerTest(unittest.TestCase):
         os.unlink(self.path)
         self.assertEqual(self.follower.lines(), [])
         self.assertFalse(self.follower.present)
+
+    # Boundaries: what the log path may point at, and how much is read.
+
+    def test_symlink_is_not_followed(self):
+        real = os.path.join(self.dir.name, "real.log")
+        self.append(status_line("listening"), real)
+        os.symlink(real, self.path)
+        self.assertEqual(self.follower.lines(), [])
+        self.assertFalse(self.follower.present)
+        self.append(status_line("idle"), real)
+        self.assertEqual(self.follower.lines(), [])
+        self.assertFalse(self.follower.present)
+
+    def test_fifo_is_not_a_log(self):
+        os.mkfifo(self.path)
+        self.assertEqual(self.follower.lines(), [])
+        self.assertFalse(self.follower.present)
+
+    def test_file_swapped_for_a_symlink_is_dropped(self):
+        self.append(b"line\n")
+        self.follower.lines()
+        self.assertTrue(self.follower.present)
+        os.rename(self.path, self.path + ".real")
+        os.symlink(self.path + ".real", self.path)
+        self.append(status_line("listening"), self.path + ".real")
+        self.assertEqual(self.follower.lines(), [])
+        self.assertFalse(self.follower.present)
+
+    def test_reads_are_capped_and_a_backlog_is_flagged(self):
+        self.follower.READ_LIMIT = 256
+        self.follower.lines()
+        self.append(status_line("listening") * 5)  # about 425 bytes
+        first = self.follower.lines()
+        self.assertTrue(self.follower.more)
+        self.assertTrue(0 < len(first) < 5)
+        rest = self.follower.lines()
+        self.assertFalse(self.follower.more)
+        self.assertEqual(len(first) + len(rest), 5)
+
+    def test_overlong_partial_line_is_dropped_whole(self):
+        self.follower.LINE_LIMIT = 100
+        self.follower.lines()
+        self.append(b"x" * 150)  # no newline yet
+        self.assertEqual(self.follower.lines(), [])
+        self.assertEqual(self.follower.buffer, b"")
+        # The tail of that line must not surface as a line of its own.
+        self.append(b"updateDictationStatus: listening\n" + status_line("processing"))
+        self.assertEqual(self.states(), ["processing"])
+
+    def test_overlong_complete_line_is_dropped(self):
+        self.follower.LINE_LIMIT = 100
+        self.follower.lines()
+        self.append(b"y" * 150 + b"\n" + status_line("idle"))
+        self.assertEqual(self.states(), ["idle"])
+
+    def test_oversized_replacement_is_taken_from_the_end(self):
+        self.follower.BACKLOG_LIMIT = 1024
+        self.append(b"old\n")
+        self.follower.lines()
+        big = os.path.join(self.dir.name, "big.log")
+        self.append(b"z" * 2000 + b"\n" + status_line("listening"), big)
+        os.rename(big, self.path)
+        self.assertEqual(self.follower.lines(), [])
+        self.assertTrue(self.follower.present)
+        self.append(status_line("idle"))
+        self.assertEqual(self.states(), ["idle"])
 
 
 class StatusTest(unittest.TestCase):
@@ -217,16 +302,62 @@ class MeterTest(unittest.TestCase):
         self.assertEqual(meter.read_levels(), [])
 
 
+class BoundaryTest(unittest.TestCase):
+    """Fixed executables, a closed child environment, and libc without a search."""
+
+    def test_executables_are_fixed_paths_never_searched_on_path(self):
+        with tempfile.TemporaryDirectory() as fake:
+            for name in ("pw-record", "setpriv"):
+                stub = os.path.join(fake, name)
+                with open(stub, "w") as handle:
+                    handle.write("#!/bin/sh\n")
+                os.chmod(stub, 0o755)
+            saved = os.environ.get("PATH")
+            os.environ["PATH"] = fake
+            try:
+                meter = helper.Meter(enabled=True)
+            finally:
+                if saved is None:
+                    del os.environ["PATH"]
+                else:
+                    os.environ["PATH"] = saved
+        self.assertTrue(helper.PW_RECORD.startswith("/usr/bin/"))
+        self.assertTrue(helper.SETPRIV.startswith("/usr/bin/"))
+        self.assertIn(meter.binary, (None, helper.PW_RECORD))
+        self.assertIn(meter.setpriv, (None, helper.SETPRIV))
+        self.assertIsNone(helper.executable(os.path.join(fake, "pw-record")))  # gone with the directory
+
+    def test_child_environment_passes_only_the_pipewire_keys(self):
+        saved = dict(os.environ)
+        os.environ.clear()
+        os.environ.update({"XDG_RUNTIME_DIR": "/run/user/1", "PATH": "/x", "LD_PRELOAD": "/y", "PIPEWIRE_REMOTE": "r"})
+        try:
+            self.assertEqual(helper.child_environment(), {"XDG_RUNTIME_DIR": "/run/user/1", "PIPEWIRE_REMOTE": "r"})
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+
+    def test_inotify_comes_from_the_interpreters_libc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            watch = helper.DirWatch(directory)
+            try:
+                self.assertIsNotNone(watch.fd)
+                watch.ensure()
+                self.assertTrue(watch.active)
+            finally:
+                watch.close()
+
+
 class CaptureProtocolTest(unittest.TestCase):
     """`capture 1` / `capture 0` on stdin start and stop the meter."""
 
-    PW_RECORD_STUB = r"""#!/usr/bin/env python3
+    PW_RECORD_STUB = """#!%s
 import sys, time
 while True:  # silence, in chunks the helper can frame
-    sys.stdout.buffer.write(b"\0" * 1600)
+    sys.stdout.buffer.write(b"\\0" * 1600)
     sys.stdout.buffer.flush()
     time.sleep(0.05)
-"""
+""" % sys.executable
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -234,11 +365,8 @@ while True:  # silence, in chunks the helper can frame
         with open(stub, "w") as handle:
             handle.write(self.PW_RECORD_STUB)
         os.chmod(stub, 0o755)
-        env = dict(os.environ, PATH=self.dir.name + os.pathsep + os.environ["PATH"])
-        self.proc = subprocess.Popen(
-            [sys.executable, HELPER, "--log", os.path.join(self.dir.name, "launcher.log")],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env=env,
-        )
+        self.proc = spawn_helper(["--log", os.path.join(self.dir.name, "launcher.log")],
+                                 patch="h.PW_RECORD = %r" % stub)
 
     def tearDown(self):
         if self.proc.poll() is None:
@@ -285,18 +413,19 @@ class HelperProcessTest(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.path = os.path.join(self.dir.name, "wispr", "launcher.log")
-        self.proc = subprocess.Popen(
-            [sys.executable, HELPER, "--log", self.path, "--no-meter"],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-        )
+        self.proc = None
 
     def tearDown(self):
-        if self.proc.poll() is None:
-            self.proc.kill()
-            self.proc.wait()
-        self.proc.stdin.close()
-        self.proc.stdout.close()
+        if self.proc is not None:
+            if self.proc.poll() is None:
+                self.proc.kill()
+                self.proc.wait()
+            self.proc.stdin.close()
+            self.proc.stdout.close()
         self.dir.cleanup()
+
+    def start(self, patch=None):
+        self.proc = spawn_helper(["--log", self.path, "--no-meter"], patch=patch)
 
     def read(self, timeout=3.0):
         ready, _, _ = select.select([self.proc.stdout], [], [], timeout)
@@ -304,6 +433,7 @@ class HelperProcessTest(unittest.TestCase):
         return json.loads(self.proc.stdout.readline())
 
     def test_follows_a_log_that_appears_later(self):
+        self.start()
         self.assertEqual(self.read(), {"state": "idle", "level": None, "log": False, "meter": False})
         os.makedirs(os.path.dirname(self.path))
         with open(self.path, "ab") as handle:
@@ -315,12 +445,21 @@ class HelperProcessTest(unittest.TestCase):
             record = self.read()
             self.assertEqual((record["state"], record["log"]), ("listening", True))
 
+    def test_heartbeat_repeats_the_record_while_nothing_changes(self):
+        self.start(patch="h.HEARTBEAT = 0.3")
+        first = self.read()
+        started = time.monotonic()
+        self.assertEqual(self.read(timeout=1.5), first)
+        self.assertGreater(time.monotonic() - started, 0.2)
+
     def test_exits_when_stdin_closes(self):
+        self.start()
         self.read()
         self.proc.stdin.close()
         self.assertEqual(self.proc.wait(3), 0)
 
     def test_exits_cleanly_on_sigterm(self):
+        self.start()
         self.read()
         self.proc.send_signal(signal.SIGTERM)
         self.assertEqual(self.proc.wait(3), 0)

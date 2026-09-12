@@ -7,26 +7,32 @@ Follows the wispr-flow-linux launcher log (Electron stdout) for
     {"state": "idle|starting|listening|processing", "level": 0.0-1.0 | null,
      "log": true|false, "meter": true|false}
 
-`state` is what the log says, `log` whether the log file exists, `meter`
-whether a level meter can run. While the log says listening, or the parent
-reports a Wispr capture stream on stdin (`capture 1` / `capture 0`), the
-default microphone is sampled with pw-record and a level is emitted ~20 times
-a second. The parent owns the merge with PipeWire; this process only reports.
+`state` is what the log says, `log` whether the log file is being followed,
+`meter` whether a level meter can run. While the log says listening, or the
+parent reports a Wispr capture stream on stdin (`capture 1` / `capture 0`),
+the default microphone is sampled with pw-record and a level is emitted ~20
+times a second. The parent owns the merge with PipeWire; this process only
+reports. A record is repeated at least every HEARTBEAT seconds, so the parent
+can tell a quiet helper from a stuck one.
 
-Stdlib only. Runs as the shell's direct child under `setpriv --pdeathsig TERM`
-and also exits when its stdin closes, so it cannot outlive the shell.
+Boundaries: stdlib only. Every executable is a fixed /usr/bin path and libc is
+the running interpreter's own, so nothing is looked up through PATH or the
+loader's search paths. The log is opened without following a symlink and is
+followed only while it is a regular file owned by this user, and every read,
+line and backlog has a fixed byte budget. The shell starts this file as
+`setsid setpriv --pdeathsig TERM python3 -I -S` with a closed environment;
+it also exits when its stdin closes, so it cannot outlive the shell.
 """
 import argparse
 import array
 import ctypes
-import ctypes.util
 import json
 import math
 import os
 import re
 import select
-import shutil
 import signal
+import stat
 import struct
 import subprocess
 import sys
@@ -41,6 +47,12 @@ STATE_MAP = {
     "processing": "processing",
 }
 
+# Fixed executables, never searched for on PATH.
+PW_RECORD = "/usr/bin/pw-record"
+SETPRIV = "/usr/bin/setpriv"
+# All pw-record gets of our environment: enough to find the PipeWire socket.
+CHILD_ENV_KEYS = ("XDG_RUNTIME_DIR", "PIPEWIRE_RUNTIME_DIR", "PIPEWIRE_REMOTE")
+
 RATE = 16000
 CHUNK_BYTES = RATE * 50 // 1000 * 2  # 50 ms of s16 mono => 20 Hz levels
 
@@ -51,6 +63,20 @@ STATE_TIMEOUTS = {"starting": 15.0, "processing": 60.0, "listening": 15 * 60.0}
 # whole mechanism while the log directory does not exist yet).
 POLL_WATCHED = 5.0
 POLL_UNWATCHED = 1.0
+# A record at least this often, changed or not: the parent's liveness signal.
+HEARTBEAT = 5.0
+# Commands from the parent are a few bytes; more than this is not the parent.
+STDIN_LIMIT = 4096
+
+
+def executable(path):
+    """`path` when it names an executable file, else None. No PATH search."""
+    return path if os.path.isfile(path) and os.access(path, os.X_OK) else None
+
+
+def child_environment():
+    """The closed environment a child gets: only CHILD_ENV_KEYS, when set."""
+    return {key: os.environ[key] for key in CHILD_ENV_KEYS if key in os.environ}
 
 
 def map_state(raw):
@@ -67,67 +93,120 @@ def parse_state(line):
 
 
 class LogFollower:
-    """In-process `tail -F`: survives the file being absent, truncated or replaced.
+    """In-process `tail -F` with a fixed budget.
+
+    The path is opened without following a final symlink, and is followed only
+    while it names a regular file owned by this user; anything else counts as
+    absent. Each poll reads at most READ_LIMIT bytes (`more` says a backlog is
+    left), a line longer than LINE_LIMIT is dropped whole, and a replacement
+    file larger than BACKLOG_LIMIT is picked up at its end, not replayed.
 
     The first open seeks to the end so an old session's last state is not
     replayed; a file that appears or is replaced later is read from the start.
     """
 
+    OPEN_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC | os.O_NOCTTY | os.O_NONBLOCK
+    READ_LIMIT = 64 * 1024
+    LINE_LIMIT = 64 * 1024
+    BACKLOG_LIMIT = 1024 * 1024
+
     def __init__(self, path):
         self.path = path
-        self.handle = None
-        self.inode = None
-        self.buffer = b""
+        self.fd = None
+        self.identity = None  # (st_dev, st_ino) of the open file
+        self.offset = 0  # bytes consumed from it
+        self.buffer = b""  # partial trailing line
+        self.skipping = False  # inside a line that went over LINE_LIMIT
+        self.more = False  # the last read hit READ_LIMIT: poll again at once
         self.opened_once = False
 
     @property
     def present(self):
-        return self.handle is not None
+        return self.fd is not None
+
+    @staticmethod
+    def acceptable(st):
+        return stat.S_ISREG(st.st_mode) and st.st_uid == os.geteuid()
 
     def _open(self):
         try:
-            handle = open(self.path, "rb")
-        except OSError:
+            fd = os.open(self.path, self.OPEN_FLAGS)
+        except OSError:  # absent, unreadable, or a symlink (ELOOP)
             return False
-        self.handle = handle
-        self.inode = os.fstat(handle.fileno()).st_ino
+        st = os.fstat(fd)
+        if not self.acceptable(st):
+            os.close(fd)
+            return False
+        # An old session's tail is not replayed, and neither is an oversized
+        # replacement, which is not a fresh session's log either.
+        skip = not self.opened_once or st.st_size > self.BACKLOG_LIMIT
+        self.fd = fd
+        self.identity = (st.st_dev, st.st_ino)
+        self.offset = os.lseek(fd, st.st_size if skip else 0, os.SEEK_SET)
         self.buffer = b""
-        if not self.opened_once:
-            handle.seek(0, os.SEEK_END)
+        self.skipping = False
         self.opened_once = True
         return True
 
     def _close(self):
-        if self.handle:
-            self.handle.close()
-        self.handle = None
+        if self.fd is not None:
+            os.close(self.fd)
+        self.fd = None
+        self.identity = None
         self.buffer = b""
+        self.skipping = False
+        self.more = False
 
     def close(self):
         self._close()
 
+    def _changed(self):
+        """The path no longer names the open file, or the file was truncated."""
+        try:
+            st = os.lstat(self.path)
+        except OSError:
+            return True
+        return (
+            not self.acceptable(st)
+            or (st.st_dev, st.st_ino) != self.identity
+            or st.st_size < self.offset
+        )
+
     def lines(self):
-        """Complete lines appended since the last call."""
-        if self.handle is None:
+        """Complete lines appended since the last call, from at most READ_LIMIT bytes."""
+        self.more = False
+        if self.fd is None:
             if not self._open():
                 self.opened_once = True  # a file created later is new content
                 return []
-        try:
-            stat = os.stat(self.path)
-        except OSError:
-            self._close()
-            return []
-        if stat.st_ino != self.inode or stat.st_size < self.handle.tell():
+        elif self._changed():
             self._close()
             if not self._open():
                 return []
-        data = self.handle.read()
+        try:
+            data = os.read(self.fd, self.READ_LIMIT)
+        except OSError:
+            self._close()
+            return []
         if not data:
             return []
-        self.buffer += data
-        parts = self.buffer.split(b"\n")
+        self.offset += len(data)
+        self.more = len(data) == self.READ_LIMIT
+        return self._split(data)
+
+    def _split(self, data):
+        if self.skipping:  # the rest of an overlong line goes too
+            cut = data.find(b"\n")
+            if cut < 0:
+                return []
+            data = data[cut + 1:]
+            self.skipping = False
+        parts = (self.buffer + data).split(b"\n")
         self.buffer = parts.pop()  # keep a partial trailing line for next time
-        return parts
+        if len(self.buffer) > self.LINE_LIMIT:
+            self.buffer = b""
+            self.skipping = True
+        return [part for part in parts if len(part) <= self.LINE_LIMIT]
 
 
 class NoiseFloor:
@@ -170,8 +249,8 @@ class Meter:
     """Default-source capture through pw-record; one level per full chunk."""
 
     def __init__(self, enabled):
-        self.binary = shutil.which("pw-record") if enabled else None
-        self.setpriv = shutil.which("setpriv")
+        self.binary = executable(PW_RECORD) if enabled else None
+        self.setpriv = executable(SETPRIV)
         self.proc = None
         self.failed = False  # pw-record quit on its own during this capture
         self.pending = b""
@@ -194,7 +273,11 @@ class Meter:
             command = [self.setpriv, "--pdeathsig", "TERM"] + command
         try:
             self.proc = subprocess.Popen(
-                command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                env=child_environment(),
             )
         except OSError:
             self.proc = None
@@ -254,11 +337,10 @@ class DirWatch:
         self.fd = None
         self.wd = None
         self.libc = None
-        name = ctypes.util.find_library("c")
-        if not name:
-            return
         try:
-            self.libc = ctypes.CDLL(name, use_errno=True)
+            # The interpreter's own libc: no library search, no ldconfig or
+            # compiler probing the way ctypes.util.find_library would do it.
+            self.libc = ctypes.CDLL(None, use_errno=True)
             fd = self.libc.inotify_init1(self.IN_NONBLOCK | self.IN_CLOEXEC)
         except (OSError, AttributeError):
             self.libc = None
@@ -344,13 +426,15 @@ def run(log_path, meter_enabled, stdin=sys.stdin.buffer, out=sys.stdout):
 
     follower.lines()
     last = None
+    last_emit = 0.0
 
-    def report(level=None):
-        nonlocal last
+    def report(level=None, force=False):
+        nonlocal last, last_emit
         snapshot = (status.state, follower.present, meter.available)
-        if level is None and snapshot == last:
+        if level is None and not force and snapshot == last:
             return
         last = snapshot
+        last_emit = time.monotonic()
         emit(out, status.state, level, follower.present, meter.available)
 
     report()
@@ -372,6 +456,9 @@ def run(log_path, meter_enabled, stdin=sys.stdin.buffer, out=sys.stdout):
             remaining = status.remaining()
             if remaining is not None:
                 timeout = min(timeout, remaining + 0.05)
+            timeout = min(timeout, max(0.0, last_emit + HEARTBEAT - time.monotonic()))
+            if follower.more:
+                timeout = 0.0  # a backlog is waiting; keep draining it
             readable, _, _ = select.select(fds, [], [], timeout)
 
             if stdin_fd in readable:
@@ -384,6 +471,8 @@ def run(log_path, meter_enabled, stdin=sys.stdin.buffer, out=sys.stdout):
                 if data:
                     stdin_buffer += data
                     *commands, stdin_buffer = stdin_buffer.split(b"\n")
+                    if len(stdin_buffer) > STDIN_LIMIT:
+                        stdin_buffer = b""
                     for command in commands:
                         if command.strip() == b"capture 1":
                             capture_hint = True
@@ -394,7 +483,7 @@ def run(log_path, meter_enabled, stdin=sys.stdin.buffer, out=sys.stdout):
 
             status.feed(follower.lines())
             status.expire()
-            report()
+            report(force=time.monotonic() - last_emit >= HEARTBEAT)
 
             if meter.fd is not None and meter.fd in readable:
                 for level in meter.read_levels():
