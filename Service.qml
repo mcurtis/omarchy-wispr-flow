@@ -10,6 +10,12 @@ import Quickshell.Services.Pipewire
 //   - helper/wispr_flow_status.py: follows the launcher log for the starting and
 //     processing states and samples the microphone for the level meter.
 //
+// The helper is the only process this plugin starts, and it is confined: fixed
+// /usr/bin executables (no PATH lookup), an isolated interpreter (-I -S) in a
+// closed environment, its own process group so the whole tree is signalled
+// together, a byte budget on what it may send, and a deadline by which it must
+// have said something. The README's "The helper's boundaries" has the summary.
+//
 // Not keepLoaded: nothing here must survive a plugin hot-reload, and a kept
 // instance would keep running old code (and an old helper) until a shell
 // restart. The host destroys and recreates this object on reload instead.
@@ -28,6 +34,13 @@ Scope {
 
   readonly property int historySize: 12 // the widget's maximum bar count
   readonly property int staleGraceMs: 3000
+  // The helper repeats a record at least every 5 s (HEARTBEAT in the helper).
+  // Silence past this deadline means it is stuck or replaced: it is killed.
+  readonly property int helperDeadlineMs: 30000
+  // A real record is under 100 characters; anything near this is not the helper.
+  readonly property int helperLineBudget: 4096
+  // TERM goes to the helper's process group; KILL follows for whatever is left.
+  readonly property int killGraceMs: 2000
 
   property string logState: "idle"
   property bool logPresent: false
@@ -40,7 +53,9 @@ Scope {
 
   property bool destroying: false
   property bool restartPending: false
+  property bool abandoning: false // the running helper is being taken down for misbehaving
   property int retryDelay: 1000
+  property string pending: "" // helper output since the last newline
 
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   // A node's `properties` stay empty until something binds it, so every capture
@@ -91,7 +106,7 @@ Scope {
   readonly property string degraded: {
     var reasons = []
     if (!helperAvailable)
-      reasons.push("Status helper not running (needs python3 and setpriv): listening only, no meter")
+      reasons.push("Status helper not running (needs /usr/bin/python3 and util-linux): listening only, no meter")
     else if (!logPresent)
       reasons.push("Wispr log not found at " + resolvedLogPath + ": no starting or transcribing state")
     if (helperAvailable && meterEnabled && !helperMeter)
@@ -101,17 +116,52 @@ Scope {
 
   readonly property string helperPath: decodeURIComponent(
     Qt.resolvedUrl("helper/wispr_flow_status.py").toString().replace(/^file:\/\//, ""))
+  // Every executable by absolute path; nothing is resolved through PATH.
   readonly property var helperCommand: {
-    var command = ["setpriv", "--pdeathsig", "TERM", "python3", helperPath, "--log", resolvedLogPath]
+    var command = [
+      "/usr/bin/setsid",                          // its own session and process group
+      "/usr/bin/setpriv", "--pdeathsig", "TERM",  // dies with the shell
+      "/usr/bin/python3", "-I", "-S",             // no PYTHON* variables, no site or user packages
+      helperPath, "--log", resolvedLogPath
+    ]
     if (!meterEnabled) command.push("--no-meter")
     return command
   }
+  // The helper's whole environment, on top of clearEnvironment. A null entry
+  // passes the shell's value through only when the shell has one; these are
+  // what pw-record needs to find the PipeWire socket, and nothing else.
+  readonly property var helperEnvironment: ({
+    "XDG_RUNTIME_DIR": null,
+    "PIPEWIRE_RUNTIME_DIR": null,
+    "PIPEWIRE_REMOTE": null
+  })
 
   function isWisprCapture(node) {
     if (!node.ready || !node.properties) return false
     var props = node.properties
     return props["media.class"] === "Stream/Input/Audio"
       && props["application.process.binary"] === processName
+  }
+
+  // Line assembly with a budget, in place of SplitParser's own unbounded
+  // buffering: a helper that sends an overlong line, or keeps sending bytes
+  // without a newline, is not our helper and is taken down.
+  function acceptChunk(chunk) {
+    if (abandoning) return
+    var parts = (pending + chunk).split("\n")
+    pending = parts.pop()
+    for (var i = 0; i < parts.length; i++) {
+      if (parts[i].length > helperLineBudget) {
+        abandonHelper("a line over the output budget")
+        return
+      }
+      applyLine(parts[i])
+    }
+    if (pending.length > helperLineBudget) {
+      abandonHelper("output over the line budget without a newline")
+      return
+    }
+    if (parts.length > 0) watchdog.restart()
   }
 
   function applyLine(raw) {
@@ -142,12 +192,35 @@ Scope {
     if (helperProcess.running) helperProcess.write(pipewireListening ? "capture 1\n" : "capture 0\n")
   }
 
+  // Process.signal reaches the direct child only. kill(1) with the negated pid
+  // reaches the process group setsid gave the helper, a pw-record it left
+  // behind included. The pid check keeps a stale or null id from ever turning
+  // into a signal to our own group.
+  function signalHelperGroup(name) {
+    var pid = Number(helperProcess.processId)
+    if (!helperProcess.running || !(pid > 1)) return
+    Quickshell.execDetached(["/usr/bin/kill", "-s", name, "--", "-" + pid])
+  }
+
+  function terminateHelper() {
+    if (!helperProcess.running) return
+    signalHelperGroup("TERM")
+    killTimer.restart()
+  }
+
+  function abandonHelper(reason) {
+    console.warn("wispr-flow: helper sent " + reason + "; terminating its process group")
+    abandoning = true
+    pending = ""
+    terminateHelper()
+  }
+
   function restartHelper() {
     if (destroying) return
     retryTimer.stop()
     if (helperProcess.running) {
       restartPending = true
-      helperProcess.signal(15)
+      terminateHelper()
     } else {
       helperProcess.running = true
     }
@@ -167,6 +240,7 @@ Scope {
       degraded: degraded,
       logPath: resolvedLogPath,
       helperLogPath: helperLogPath,
+      helperPid: Number(helperProcess.processId) || 0,
       processName: processName,
       meterEnabled: meterEnabled
     })
@@ -193,11 +267,12 @@ Scope {
   onHelperCommandChanged: startTimer.restart()
   Component.onCompleted: startTimer.restart()
 
-  // Hot reload and disable destroy this object; take the helper down with it
-  // (pdeathsig only covers the whole shell exiting).
+  // Hot reload and disable destroy this object; take the helper's group down
+  // with it (pdeathsig only covers the whole shell exiting). The process
+  // object's own destructor kills the leader if it has not gone by then.
   Component.onDestruction: {
     destroying = true
-    if (helperProcess.running) helperProcess.signal(15)
+    signalHelperGroup("TERM")
   }
 
   function updateStale() {
@@ -226,19 +301,44 @@ Scope {
     }
   }
 
+  // Restarted by every complete line; the helper's heartbeat keeps it fed.
+  Timer {
+    id: watchdog
+    interval: root.helperDeadlineMs
+    onTriggered: root.abandonHelper("nothing for " + interval + " ms")
+  }
+
+  Timer {
+    id: killTimer
+    interval: root.killGraceMs
+    onTriggered: root.signalHelperGroup("KILL")
+  }
+
   Process {
     id: helperProcess
     command: root.helperCommand
+    clearEnvironment: true
+    environment: root.helperEnvironment
     stdinEnabled: true
+    // No split marker: chunks arrive as read and acceptChunk() assembles the
+    // lines under a budget, which the parser's newline mode cannot enforce.
     stdout: SplitParser {
-      onRead: function(data) { root.applyLine(data) }
+      splitMarker: ""
+      onRead: function(data) { root.acceptChunk(data) }
     }
     onStarted: {
+      root.pending = ""
+      root.abandoning = false
       root.helperLogPath = root.resolvedLogPath
       root.sendCaptureHint()
+      watchdog.restart()
     }
     onRunningChanged: {
       if (running) return
+      watchdog.stop()
+      killTimer.stop()
+      root.pending = ""
+      root.abandoning = false
       root.helperReporting = false
       root.helperLogPath = ""
       root.logState = "idle"

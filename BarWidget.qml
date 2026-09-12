@@ -132,7 +132,8 @@ BarWidget {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onClicked: if (root.bar) root.bar.run("wispr-flow")
+    // The AUR package's launcher, by absolute path: no shell and no PATH lookup.
+    onClicked: Quickshell.execDetached(["/usr/bin/wispr-flow"])
     onEntered: {
       root.hovered = true
       if (root.bar) root.bar.showTooltip(root, root.tooltip)
